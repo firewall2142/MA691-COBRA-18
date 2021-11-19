@@ -203,6 +203,78 @@ class Cobra(BaseEstimator):
         if info:
             return avg, points
         return avg
+    
+    def pred_surv(self, X, alpha, info=False):
+        """
+        Performs the COBRA aggregation scheme, used in predict method.
+
+        Parameters
+        ----------
+        X: array-like, [n_features]
+
+        alpha: int, optional
+            alpha refers to the number of machines the prediction must be close to to be considered during aggregation.
+
+        info: boolean, optional
+            If info is true the list of points selected in the aggregation is returned.
+
+        Returns
+        -------
+        avg_surv: Average survival function prediction
+
+        """
+
+        # dictionary mapping machine to points selected
+        select = {}
+        for machine in self.estimators_:
+            # machine prediction
+            val = self.estimators_[machine].predict(X)
+            select[machine] = set()
+            # iterating from l to n
+            # replace with numpy iteration
+            for count in range(0, len(self.X_l_)):
+                try:
+                    # if value is close to prediction, select the indice
+                    if math.fabs(self.machine_predictions_[machine][count] - val) <= self.epsilon:
+                        select[machine].add(count)
+                except (ValueError, TypeError) as e:
+                    logger.info("Error in indice selection")
+                    continue
+
+        points = []
+        # count is the indice number.
+        for count in range(0, len(self.X_l_)):
+            # row check is number of machines which picked up a particular point
+            row_check = 0
+            for machine in select:
+                if count in select[machine]:
+                    row_check += 1
+            if row_check == alpha:
+                points.append(count)
+
+        # if no points are selected, return 0
+        if len(points) == 0:
+            if info:
+                logger.info("No points were selected, prediction is 0")
+                return (0, 0)
+            return None
+
+        # aggregate
+        avg_surv = None
+        # points = [pt for pt in points if self.y_l_[pt][0]]
+        
+        for point in points:
+            for machine in select:
+                val = self.estimators_[machine].predict_surv(self.X_l_[point].reshape(1,-1))[0]
+                if avg_surv is None:
+                    avg_surv = val
+                else:
+                    avg_surv += val
+        avg_surv = avg_surv / avg_surv[0]
+
+        if info:
+            return avg_surv, points
+        return avg_surv
 
 
     def predict(self, X, alpha=None, info=False):
@@ -250,7 +322,54 @@ class Cobra(BaseEstimator):
             return result, avg_points
 
         return result
+    
+    def predict_survival_function(self, X, alpha=None, info=False):
+        """
+        Performs the COBRA aggregation scheme, calls pred_surv.
 
+        Parameters
+        ----------
+        X: array-like, [n_features]
+
+        alpha: int, optional
+            alpha refers to the number of machines the prediction must be close to to be considered during aggregation.
+
+        info: boolean, optional
+            If info is true the list of points selected in the aggregation is returned.
+
+        Returns
+        -------
+        result: predicted survival function
+
+        """
+
+        # sets alpha as the total number of machines as a default value
+
+        X = check_array(X)
+
+        if alpha is None:
+            alpha = len(self.estimators_)
+        if X.ndim == 1:
+            return self.pred_surv(X.reshape(1, -1), info=info, alpha=alpha)
+
+        result = [None]*len(X)
+        avg_points = 0
+        index = 0
+        for vector in X:
+            if info:
+                result[index], points = self.pred_surv(vector.reshape(1, -1), info=info, alpha=alpha)
+                avg_points += len(points)
+            else:
+                result[index] = self.pred_surv(vector.reshape(1, -1), info=info, alpha=alpha)
+            index += 1
+
+        result = np.array(result)
+        
+        if info:
+            avg_points = avg_points / len(X_array)
+            return result, avg_points
+
+        return result
 
     def split_data(self, k=None, l=None, shuffle_data=False):
         """
